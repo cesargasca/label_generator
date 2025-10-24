@@ -84,17 +84,11 @@ jobs:
           if (Test-Path src\invitados.txt) { Copy-Item src\invitados.txt portable\ }
           Copy-Item scripts\run_embed.bat portable\
 
-      - name: Smoke test import (reportlab + PIL) using embedded Python
+            - name: Smoke test import (reportlab + PIL) using embedded Python
         shell: pwsh
         run: |
           $py = "portable\${env:PY_EMBED}\python.exe"
-          & $py - << 'PYCODE'
-          import sys
-          print(sys.version)
-          import reportlab
-          import PIL
-          print("OK: reportlab + Pillow are importable")
-          PYCODE
+          & $py -c "import sys; print(sys.version); import reportlab; import PIL; print('OK: reportlab + Pillow are importable')"
 
       - name: Create zip
         shell: pwsh
