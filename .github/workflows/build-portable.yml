@@ -59,7 +59,7 @@ jobs:
         shell: pwsh
         run: |
           Copy-Item src\generate_labels.py portable\
-          Copy-Item scripts\run_embed.bat portable\
+          Copy-Item scripts\generador_etiquetas.bat portable\
 
       - name: Zip portable bundle
         shell: pwsh
