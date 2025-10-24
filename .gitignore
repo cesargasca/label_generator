@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.pyc
+
+# Portable runtime + packages
+python-*-embed-amd64/
+Lib/
+site-packages/
+*.whl
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Output PDFs
+*.pdf
+
+# Build artifacts
+dist/
+build/
+*.zip

@@ -1,0 +1,76 @@
+name: build-portable
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set versions
+        shell: pwsh
+        run: |
+          echo "PY_VER=3.13.9" >> $env:GITHUB_ENV
+          echo "PY_EMBED=python-3.13.9-embed-amd64" >> $env:GITHUB_ENV
+
+      - name: Make working dir
+        run: mkdir portable
+
+      - name: Download Embeddable Python
+        shell: pwsh
+        run: |
+          $url = "https://www.python.org/ftp/python/${env:PY_VER}/${env:PY_EMBED}.zip"
+          Invoke-WebRequest $url -OutFile portable\embed.zip
+          Expand-Archive portable\embed.zip -DestinationPath portable\${env:PY_EMBED} -Force
+
+      - name: Create site-packages
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path portable\${env:PY_EMBED}\Lib\site-packages | Out-Null
+
+      - name: Enable site-packages in _pth
+        shell: pwsh
+        run: |
+          $pth = "portable\${env:PY_EMBED}\python313._pth"
+          # Ensure these lines exist (order matters)
+          Add-Content $pth "."
+          Add-Content $pth "Lib\site-packages"
+          Add-Content $pth "import site"
+
+      - name: Download wheels (ReportLab + Pillow)
+        shell: pwsh
+        run: |
+          # Use pipx Python to download wheels into the workspace (no install)
+          python -m pip download --only-binary=:all: --platform win_amd64 --python-version 313 --implementation cp --dest portable\wheels reportlab pillow
+
+      - name: Extract wheels into site-packages
+        shell: pwsh
+        run: |
+          $site = "portable\${env:PY_EMBED}\Lib\site-packages"
+          Get-ChildItem portable\wheels\*.whl | ForEach-Object {
+            Expand-Archive $_.FullName -DestinationPath $site -Force
+          }
+
+      - name: Add app files
+        shell: pwsh
+        run: |
+          Copy-Item src\generate_labels.py portable\
+          Copy-Item scripts\run_embed.bat portable\
+
+      - name: Zip portable bundle
+        shell: pwsh
+        run: |
+          $zipPath = "labels_portable_${{ github.ref_name }}.zip"
+          Compress-Archive -Path portable\* -DestinationPath $zipPath -Force
+          echo "ZIP_PATH=$zipPath" >> $env:GITHUB_ENV
+
+      - name: Upload release asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ env.ZIP_PATH }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
