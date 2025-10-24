@@ -1,42 +1,54 @@
 name: build-portable
+
 on:
   push:
     tags:
       - 'v*.*.*'
+  workflow_dispatch: {}
+
+# Required so the workflow can create releases and upload assets
+permissions:
+  contents: write
 
 jobs:
   build:
+    name: Build portable bundle (Windows)
     runs-on: windows-latest
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # ---- Configure versions / names here ----
       - name: Set versions
         shell: pwsh
         run: |
+          # Python embeddable version
           echo "PY_VER=3.13.9" >> $env:GITHUB_ENV
           echo "PY_EMBED=python-3.13.9-embed-amd64" >> $env:GITHUB_ENV
+          # Output zip name will include tag (e.g. v0.0.3)
+          echo "ZIP_NAME=labels_portable_${{ github.ref_name }}.zip" >> $env:GITHUB_ENV
 
-      - name: Make working dir
-        run: mkdir portable
+      - name: Prepare workspace
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force portable | Out-Null
+          New-Item -ItemType Directory -Force portable\wheels | Out-Null
 
       - name: Download Embeddable Python
         shell: pwsh
         run: |
           $url = "https://www.python.org/ftp/python/${env:PY_VER}/${env:PY_EMBED}.zip"
+          Write-Host "Downloading $url"
           Invoke-WebRequest $url -OutFile portable\embed.zip
           Expand-Archive portable\embed.zip -DestinationPath portable\${env:PY_EMBED} -Force
 
-      - name: Create site-packages
+      - name: Create site-packages and enable import site
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path portable\${env:PY_EMBED}\Lib\site-packages | Out-Null
-
-      - name: Enable site-packages in _pth
-        shell: pwsh
-        run: |
           $pth = "portable\${env:PY_EMBED}\python313._pth"
-          # Ensure these lines exist (order matters)
+          # Ensure these lines exist; order matters
           Add-Content $pth "."
           Add-Content $pth "Lib\site-packages"
           Add-Content $pth "import site"
@@ -44,33 +56,56 @@ jobs:
       - name: Download wheels (ReportLab + Pillow)
         shell: pwsh
         run: |
-          # Use pipx Python to download wheels into the workspace (no install)
+          # Use the runner's Python to download wheels only; no install on the runner
+          python -m pip install --upgrade pip
           python -m pip download --only-binary=:all: --platform win_amd64 --python-version 313 --implementation cp --dest portable\wheels reportlab pillow
+          Write-Host "Downloaded wheels:"
+          Get-ChildItem portable\wheels
 
       - name: Extract wheels into site-packages
         shell: pwsh
         run: |
           $site = "portable\${env:PY_EMBED}\Lib\site-packages"
           Get-ChildItem portable\wheels\*.whl | ForEach-Object {
+            Write-Host "Expanding $($_.Name) -> $site"
             Expand-Archive $_.FullName -DestinationPath $site -Force
           }
 
+      # ---- Copy your app files into the portable root ----
+      # Adjust source paths to your repo layout.
+      # The following assumes:
+      #   src/generate_labels.py
+      #   src/invitados.txt (optional sample)
+      #   scripts/run_embed.bat  (launcher that calls python-3.13.9-embed-amd64\python.exe)
       - name: Add app files
         shell: pwsh
         run: |
           Copy-Item src\generate_labels.py portable\
-          Copy-Item scripts\generador_etiquetas.bat portable\
+          if (Test-Path src\invitados.txt) { Copy-Item src\invitados.txt portable\ }
+          Copy-Item scripts\run_embed.bat portable\
 
-      - name: Zip portable bundle
+      - name: Smoke test import (reportlab + PIL) using embedded Python
         shell: pwsh
         run: |
-          $zipPath = "labels_portable_${{ github.ref_name }}.zip"
-          Compress-Archive -Path portable\* -DestinationPath $zipPath -Force
-          echo "ZIP_PATH=$zipPath" >> $env:GITHUB_ENV
+          $py = "portable\${env:PY_EMBED}\python.exe"
+          & $py - << 'PYCODE'
+          import sys
+          print(sys.version)
+          import reportlab
+          import PIL
+          print("OK: reportlab + Pillow are importable")
+          PYCODE
 
-      - name: Upload release asset
+      - name: Create zip
+        shell: pwsh
+        run: |
+          Compress-Archive -Path portable\* -DestinationPath "${{ env.ZIP_NAME }}" -Force
+          echo "ZIP_PATH=${{ env.ZIP_NAME }}" >> $env:GITHUB_ENV
+
+      - name: Create GitHub Release and upload asset
         uses: softprops/action-gh-release@v2
         with:
           files: ${{ env.ZIP_PATH }}
+          generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
